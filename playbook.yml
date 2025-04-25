@@ -1,0 +1,126 @@
+---
+- name: Deploy web project with Docker
+  hosts: localhost
+  vars:
+    project_dir: "./docker-webapp"
+    apache_version: "2.4"
+    php_version: "8.2"
+    mysql_version: "8.0"
+    mysql_root_password: "secure_root_pass"
+    mysql_database: "webapp_db"
+    mysql_user: "webapp_user"
+    mysql_password: "user_pass"
+    kafka_version: "2.13-2.8.1"
+
+  tasks:
+    - name: Verify Docker and Python SDK
+      block:
+        - name: Check Docker installation
+          command: docker --version
+          register: docker_check
+          changed_when: false
+          ignore_errors: yes
+
+        - name: Ensure Docker Python SDK is installed
+          pip:
+            name: docker
+            version: ">=6.0.0"
+          become: no
+
+      rescue:
+        - name: Fail if requirements not met
+          fail:
+            msg: |
+              Docker and Docker Python SDK 6.0.0+ must be installed.
+              Run: pip install --upgrade "docker>=6.0.0"
+              And ensure Docker is installed.
+
+    - name: Create project directories
+      file:
+        path: "{{ item }}"
+        state: directory
+      loop:
+        - "{{ project_dir }}"
+        - "{{ project_dir }}/www"
+        - "{{ project_dir }}/apache-config"
+
+    - name: Generate Apache config
+      copy:
+        dest: "{{ project_dir }}/apache-config/httpd.conf"
+        content: |
+          Listen 80
+          LoadModule proxy_module modules/mod_proxy.so
+          LoadModule proxy_fcgi_module modules/mod_proxy_fcgi.so
+          
+          <VirtualHost *:80>
+              DocumentRoot "/usr/local/apache2/htdocs"
+              ProxyPassMatch ^/(.*\.php)$ fcgi://php:9000/usr/local/apache2/htdocs/$1
+              <Directory "/usr/local/apache2/htdocs">
+                  Options Indexes FollowSymLinks
+                  AllowOverride All
+                  Require all granted
+              </Directory>
+          </VirtualHost>
+
+    - name: Create docker-compose.yml
+      copy:
+        dest: "{{ project_dir }}/docker-compose.yml"
+        content: |
+          version: '3.8'
+          services:
+            webserver:
+              image: httpd:{{ apache_version }}
+              ports: ["80:80"]
+              volumes:
+                - ./www:/usr/local/apache2/htdocs
+                - ./apache-config/httpd.conf:/usr/local/apache2/conf/httpd.conf
+              depends_on: [php, mysql, kafka]
+
+            php:
+              image: php:{{ php_version }}-fpm
+              volumes: [./www:/var/www/html]
+
+            mysql:
+              image: mysql:{{ mysql_version }}
+              environment:
+                MYSQL_ROOT_PASSWORD: {{ mysql_root_password }}
+                MYSQL_DATABASE: {{ mysql_database }}
+                MYSQL_USER: {{ mysql_user }}
+                MYSQL_PASSWORD: {{ mysql_password }}
+              volumes: [mysql-data:/var/lib/mysql]
+
+            zookeeper:
+              image: wurstmeister/zookeeper
+
+            kafka:
+              image: wurstmeister/kafka:{{ kafka_version }}
+              ports: ["9092:9092"]
+              environment:
+                KAFKA_ADVERTISED_HOST_NAME: kafka
+                KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+                KAFKA_CREATE_TOPICS: "webapp_events:1:1"
+              depends_on: [zookeeper]
+
+          volumes:
+            mysql-data:
+
+    - name: Create PHP test file
+      copy:
+        dest: "{{ project_dir }}/www/index.php"
+        content: |
+          <?php
+          phpinfo();
+          try {
+              $db = new PDO('mysql:host=mysql;dbname={{ mysql_database }}', '{{ mysql_user }}', '{{ mysql_password }}');
+              echo "DB Connected!";
+          } catch (PDOException $e) {
+              echo "DB Error: " . $e->getMessage();
+          }
+          ?>
+
+    - name: Start containers
+      community.docker.docker_compose:
+        project_src: "{{ project_dir }}"
+        pull: yes
+        build: no
+        state: present
