@@ -1,0 +1,63 @@
+---
+- name: Deploy small web project infrastructure with Docker
+  hosts: localhost
+  vars:
+    apache_version: "2.4"
+    php_version: "8.2"
+    mysql_version: "8.0"
+    mysql_root_password: "secure_root_password"
+    mysql_database: "webapp_db"
+    mysql_user: "webapp_user"
+    mysql_password: "secure_db_password"
+    zookeeper_version: "latest"
+    kafka_version: "2.13-2.8.1"
+    kafka_topics:
+      - "webapp_events:1:1"
+    
+  tasks:
+    - name: Verify Docker is installed
+      command: docker --version
+      register: docker_check
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Fail if Docker is not installed
+      fail:
+        msg: "Docker is not installed. Please install Docker and Docker Compose before running this playbook."
+      when: docker_check.rc != 0
+
+    - name: Create project directory structure
+      file:
+        path: "{{ item }}"
+        state: directory
+      loop:
+        - ./docker-webapp
+        - ./docker-webapp/www
+        - ./docker-webapp/apache-config
+
+    - name: Copy Apache configuration
+      copy:
+        src: templates/httpd.conf
+        dest: ./docker-webapp/apache-config/httpd.conf
+
+    - name: Generate docker-compose.yml
+      template:
+        src: templates/docker-compose.yml.j2
+        dest: ./docker-webapp/docker-compose.yml
+
+    - name: Create sample PHP file
+      copy:
+        content: |
+          <?php
+          phpinfo();
+          ?>
+        dest: ./docker-webapp/www/index.php
+
+    - name: Start Docker containers
+      docker_compose:
+        project_src: ./docker-webapp
+        build: no
+        state: present
+        restarted: yes
+        recreate: always
+        pull: yes
