@@ -1,0 +1,67 @@
+---
+- name: Deploy small web project infrastructure with Docker
+  hosts: localhost
+  become: yes
+  vars:
+    apache_version: "2.4"
+    php_version: "8.2"
+    mysql_version: "8.0"
+    mysql_root_password: "secure_root_password"
+    mysql_database: "webapp_db"
+    mysql_user: "webapp_user"
+    mysql_password: "secure_db_password"
+    zookeeper_version: "latest"
+    kafka_version: "2.13-2.8.1"
+    kafka_topics:
+      - "webapp_events:1:1"
+    
+  tasks:
+    - name: Install required system packages
+      apt:
+        name: "{{ item }}"
+        state: present
+        update_cache: yes
+      loop:
+        - docker.io
+        - docker-compose
+        - python3-pip
+    
+    - name: Install Docker Python module
+      pip:
+        name: docker
+    
+    - name: Create project directory structure
+      file:
+        path: "{{ item }}"
+        state: directory
+      loop:
+        - ./docker-webapp
+        - ./docker-webapp/www
+        - ./docker-webapp/apache-config
+    
+    - name: Copy Apache configuration
+      template:
+        src: templates/httpd.conf.j2
+        dest: ./docker-webapp/apache-config/httpd.conf
+    
+    - name: Generate docker-compose.yml
+      template:
+        src: templates/docker-compose.yml.j2
+        dest: ./docker-webapp/docker-compose.yml
+    
+    - name: Create sample PHP file
+      copy:
+        content: |
+          <?php
+          phpinfo();
+          ?>
+        dest: ./docker-webapp/www/index.php
+    
+    - name: Start Docker containers
+      docker_compose:
+        project_src: ./docker-webapp
+        build: no
+        state: present
+        restarted: yes
+        recreate: always
+        pull: yes

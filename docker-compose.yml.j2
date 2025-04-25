@@ -1,0 +1,62 @@
+version: '3'
+
+services:
+  webserver:
+    image: httpd:{{ apache_version }}
+    ports:
+      - "80:80"
+    volumes:
+      - ./www:/usr/local/apache2/htdocs
+      - ./apache-config/httpd.conf:/usr/local/apache2/conf/httpd.conf
+    depends_on:
+      - php
+      - mysql
+      - kafka
+    networks:
+      - app-network
+
+  php:
+    image: php:{{ php_version }}-fpm
+    volumes:
+      - ./www:/var/www/html
+    networks:
+      - app-network
+
+  mysql:
+    image: mysql:{{ mysql_version }}
+    environment:
+      MYSQL_ROOT_PASSWORD: "{{ mysql_root_password }}"
+      MYSQL_DATABASE: "{{ mysql_database }}"
+      MYSQL_USER: "{{ mysql_user }}"
+      MYSQL_PASSWORD: "{{ mysql_password }}"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    networks:
+      - app-network
+
+  zookeeper:
+    image: wurstmeister/zookeeper:{{ zookeeper_version }}
+    ports:
+      - "2181:2181"
+    networks:
+      - app-network
+
+  kafka:
+    image: wurstmeister/kafka:{{ kafka_version }}
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_ADVERTISED_HOST_NAME: kafka
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_CREATE_TOPICS: "{{ kafka_topics | join(',') }}"
+    depends_on:
+      - zookeeper
+    networks:
+      - app-network
+
+volumes:
+  mysql-data:
+
+networks:
+  app-network:
+    driver: bridge
