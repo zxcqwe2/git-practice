@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+  webserver:
+    image: httpd:{{ apache_version }}
+    container_name: "{{ project_name }}-webserver"
+    ports:
+      - "{{ http_port }}:80"
+      - "{{ https_port }}:443"
+    volumes:
+      - ./www:/usr/local/apache2/htdocs/
+      - ./config/apache/httpd.conf:/usr/local/apache2/conf/httpd.conf
+      - ./config/apache/extra/httpd-vhosts.conf:/usr/local/apache2/conf/extra/httpd-vhosts.conf
+    depends_on:
+      - php
+    networks:
+      - backend
+
+  php:
+    image: php:{{ php_version }}-fpm
+    container_name: "{{ project_name }}-php-fpm"
+    volumes:
+      - ./www:/var/www/html
+      - ./config/php/php.ini:/usr/local/etc/php/conf.d/custom.ini
+    networks:
+      - backend
+
+  db:
+    image: mysql:{{ mysql_version }}
+    container_name: "{{ project_name }}-mysql"
+    environment:
+      MYSQL_ROOT_PASSWORD: "{{ mysql_root_password }}"
+      MYSQL_DATABASE: "{{ mysql_database }}"
+      MYSQL_USER: "{{ mysql_user }}"
+      MYSQL_PASSWORD: "{{ mysql_password }}"
+    volumes:
+      - ./data/mysql:/var/lib/mysql
+      - ./config/mysql/my.cnf:/etc/mysql/my.cnf
+    ports:
+      - "{{ mysql_port }}:3306"
+    networks:
+      - backend
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:{{ kafka_version }}
+    container_name: "{{ project_name }}-zookeeper"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - backend
+
+  kafka:
+    image: confluentinc/cp-kafka:{{ kafka_version }}
+    container_name: "{{ project_name }}-kafka"
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    ports:
+      - "29092:29092"
+      - "9092:9092"
+    networks:
+      - backend
+
+networks:
+  backend:
+    driver: bridge
