@@ -1,0 +1,141 @@
+---
+- name: Install Docker and test Python script in container
+  hosts: localhost
+  become: yes
+  vars:
+    docker_image_name: "http-stat-checker"
+    container_name: "stat-checker"
+    # Пути к локальным файлам (относительно playbook)
+    local_script_path: "files/http_requests.py"
+    local_dockerfile_path: "files/Dockerfile"
+
+  tasks:
+    # Установка зависимостей для Docker
+    - name: Install required system packages
+      apt:
+        name: "{{ item }}"
+        state: present
+        update_cache: yes
+      loop:
+        - apt-transport-https
+        - ca-certificates
+        - curl
+        - software-properties-common
+        - python3
+        - python3-pip
+      when: ansible_os_family == 'Debian'
+
+    # Добавление Docker GPG ключа
+    - name: Add Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    # Добавление Docker репозитория
+    - name: Add Docker repository
+      apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+
+    # Установка Docker
+    - name: Install Docker
+      apt:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - docker-ce
+        - docker-ce-cli
+        - containerd.io
+
+    # Добавление пользователя в группу docker
+    - name: Add user to docker group
+      user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: yes
+
+    # Запуск и включение Docker службы
+    - name: Start and enable Docker service
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+    # Проверка установки Docker
+    - name: Verify Docker installation
+      command: docker --version
+      register: docker_version
+      changed_when: false
+
+    - name: Show Docker version
+      debug:
+        var: docker_version.stdout
+
+    # Копирование локального Python скрипта
+    - name: Copy local Python script
+      copy:
+        src: "{{ local_script_path }}"
+        dest: "/tmp/docker_build/http_requests.py"
+        mode: '0644'
+
+    # Копирование локального Dockerfile
+    - name: Copy local Dockerfile
+      copy:
+        src: "{{ local_dockerfile_path }}"
+        dest: "/tmp/docker_build/Dockerfile"
+        mode: '0644'
+
+    # Сборка Docker образа
+    - name: Build Docker image
+      community.docker.docker_image:
+        name: "{{ docker_image_name }}"
+        build:
+          path: "/tmp/docker_build"
+          dockerfile: "Dockerfile"
+        source: build
+        state: present
+
+    # Запуск контейнера
+    - name: Run container
+      community.docker.docker_container:
+        name: "{{ container_name }}"
+        image: "{{ docker_image_name }}"
+        state: started
+        detach: true
+
+    # Проверка состояния контейнера
+    - name: Check container status
+      community.docker.docker_container_info:
+        name: "{{ container_name }}"
+      register: container_info
+
+    - name: Verify container is running
+      assert:
+        that:
+          - container_info.containers[0].State.Status == 'running'
+        fail_msg: "Container is not running"
+
+    # Получение логов контейнера
+    - name: Get container logs
+      community.docker.docker_container_logs:
+        container: "{{ container_name }}"
+      register: container_logs
+
+    - name: Show container logs
+      debug:
+        var: container_logs.log
+
+    # Проверка успешности выполнения скрипта
+    - name: Check script success in logs
+      assert:
+        that:
+          - "'All requests completed.' in container_logs.log"
+          - "'SUCCESS - Status Code: 200' in container_logs.log"
+          - "'ERROR: HTTP Error 404' in container_logs.log"
+        fail_msg: "Script did not complete successfully or missing expected output"
+
+    # Очистка временных файлов
+    - name: Cleanup temp files
+      file:
+        path: "/tmp/docker_build"
+        state: absent
