@@ -1,0 +1,24 @@
+[Unit]
+Description=Hostmetrics Prometheus exporter (host type)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ hostmetrics_user }}
+Group={{ hostmetrics_group }}
+WorkingDirectory={{ hostmetrics_dir }}
+Environment=PORT={{ hostmetrics_port }}
+Environment=PYTHONUNBUFFERED=1
+ExecStart={{ hostmetrics_venv }}/bin/python {{ hostmetrics_dir }}/hostmetrics.py
+Restart=always
+RestartSec=2
+
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
