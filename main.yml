@@ -1,0 +1,72 @@
+---
+- name: Ensure base packages are present
+  package:
+    name:
+      - python3
+      - python3-pip
+      - python3-venv
+      - systemd
+      - firewalld
+    state: present
+
+- name: Ensure firewalld is running
+  service:
+    name: firewalld
+    state: started
+    enabled: true
+
+- name: Open port 8080/tcp in firewalld
+  firewalld:
+    port: 8080/tcp
+    permanent: true
+    state: enabled
+    immediate: true
+
+- name: Create service user
+  user:
+    name: "{{ hostmetrics_user }}"
+    system: true
+    create_home: false
+    shell: /sbin/nologin
+
+- name: Create app directory
+  file:
+    path: "{{ hostmetrics_dir }}"
+    state: directory
+    owner: "{{ hostmetrics_user }}"
+    group: "{{ hostmetrics_group }}"
+    mode: "0755"
+
+- name: Create virtualenv
+  command: "python3 -m venv {{ hostmetrics_venv }}"
+  args:
+    creates: "{{ hostmetrics_venv }}/bin/activate"
+
+- name: Install Python deps into venv
+  pip:
+    name:
+      - prometheus_client
+    virtualenv: "{{ hostmetrics_venv }}"
+
+- name: Copy application file
+  copy:
+    src: "hostmetrics.py"
+    dest: "{{ hostmetrics_dir }}/hostmetrics.py"
+    owner: "{{ hostmetrics_user }}"
+    group: "{{ hostmetrics_group }}"
+    mode: "0755"
+
+- name: Install systemd unit
+  template:
+    src: hostmetrics.service.j2
+    dest: "/etc/systemd/system/{{ hostmetrics_service }}"
+    mode: "0644"
+  notify:
+    - systemd daemon-reload
+    - restart hostmetrics
+
+- name: Enable and start service
+  systemd:
+    name: "{{ hostmetrics_service }}"
+    state: started
+    enabled: true
